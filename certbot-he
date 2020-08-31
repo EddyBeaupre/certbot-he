@@ -75,7 +75,7 @@ class certbot:
                 else:
                     logging.error(
                         'Please define \'Email\' with your email address in the \'DEFAULT\' section of the configuration file')
-        return none
+        return None
 
     def getDomainList(self, config):
         try:
