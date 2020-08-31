@@ -7,9 +7,6 @@ With this script, domains that are hosted at the Hurricane Electric DNS service 
 
 ```
 [DEFAULT]
-;username and password are needed to create and delete TXT records.
-UserName = <dns.he.net username>
-Password = <dns.he.net password>
 ; Email address is used by Let's Encrypt for important account notifications
 Email = <your email>
 ; RSA Key Size of the cerficate
@@ -18,10 +15,14 @@ KeySize = 4096
 #certbot = /usr/bin/certbot
 ; If certbot-he is not in the system's path, specify it's location
 #certbotHe = /usr/local/bin/certbot-he
+; Run a command after updating your certificate to do wathever cleanup you need.
+#postHook = /bin/systemctl reload apache2
 
 ; You can have as many domain section as you want. The first domain will
 ; also be the certificate name.
 [domain.com]
+; Key for the DDNS enabled TXT record
+Key = DDNS_HE_TXT_KEY
 ; Request a certificate for this domain.
 Domain = True
 ; Request a wildcard certificate for this domain.
@@ -32,6 +33,8 @@ Wildcard = True
 ; is already covered by *.domain.com, but you still can a wildcard for
 ; *.subdomain.domain.com
 [subdomain.domain.com]
+; Key for the DDNS enabled TXT record
+Key = DDNS_HE_TXT_KEY
 ; Do not request a certificate for this subdomain
 Domain = False
 ; But request a wildcard certificate for it.
@@ -85,3 +88,5 @@ This is a complete rewrite of Ondrej Simek's `certbot-he-hook` on python, with m
 While i didn't used any of Ondrej's code, credit is well deserved for having the idea to parse the HTML and figure out how dns.he.net handle update. If they could just add a proper API to their service...
 
 Got check the original script at https://github.com/angel333/certbot-he-hook
+
+With the introduction of the dynamic TXT record on dns.he.net, this script no longer use Ondrej's HTML parsing technique. But since the first idea of the script came from him, he still deserve all the credits.
