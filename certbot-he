@@ -11,106 +11,38 @@ import subprocess
 import requests
 import logging
 import logging.handlers
+import urllib.parse
+
+VERSION = '0.30.0'
+
 
 class certbotHook:
-    def getSession(self, userName, password):
-        try:
-            logging.info('Requesting session Id')
-            sessionId = None
-            session = requests.Session()
-            if session.get('https://dns.he.net/'):
-                sessionId=session.cookies.get_dict()['CGISESSID']
-                data = {'email':userName, 'pass':password}
-                cookie = {'CGISESSID':sessionId}
-                logging.info('Connecting to dns.he.net with username ' + userName)
-                request = requests.post('https://dns.he.net/', data=data, cookies=cookie)
-                if request:
-                    zoneList = []
-                    logging.info('Extracting zone list')
-                    m = re.search("<!-- Start domain panel-->(.*)<!-- End Domain panel-->", request.text, flags=re.S)
-                    for line in re.findall("name=\"[^\"]+\" value=\"[0-9]+",'\n'.join(re.findall("delete_dom.*name=\"[^\"]+\" value=\"[0-9]+", m.group(0)))):
-                        zone=dict(s.split('=') for s in line.replace('"', '').split())
-                        if not zone['name'].endswith('.arpa'):
-                            zoneList.append(dict(s.split('=') for s in line.replace('"', '').split()))
-                    if len(zoneList) == 0:
-                        logging.error('No zone found')
-                        return None, None
-                    return sessionId, sorted(zoneList, key=lambda i: len(i['name']), reverse=True)
-            logging.error('Login was unsuccessful')
-            return None, None
-        except:
-            logging.exception('An exception occured')
-            return None, None
-
-    def findZoneId(self, domain, zoneList):
-        try:
-            zones = []
-            logging.info('Searching zone id for domain ' +  domain)
-            for zone in zoneList:
-                if domain.endswith(zone['name']):
-                    logging.info('Zone id: ' +  zone['value'])
-                    return zone['value']
-            logging.error('Zone id not found')
-            return None
-        except:
-            logging.exception('An exception occured')
-            return None
-    
-    def addRecordTxt(self, sessionId, zoneId, recordName, recordData, recordTtl=300):
-        try:
-            logging.info('Adding TXT record ' +  recordName + ' with value "' + recordData + '"')
-            data = { 'account': '', 'menu': 'edit_zone', 'Type': 'TXT', 'hosted_dns_zoneid': zoneId, 'hosted_dns_recordid': '', 'hosted_dns_editzone': 1, 'Priority': '', 'Name': recordName, 'Content': recordData, 'TTL': recordTtl, 'hosted_dns_editrecord': 'Submit'}
-            cookie = {'CGISESSID':sessionId}
-            request = requests.post('https://dns.he.net/', data=data, cookies=cookie)
-            if request:
-                recordId =[]
-                for line in re.findall("\('[0-9]+",'\n'.join(re.findall("deleteRecord\('.*','" + recordName + "','TXT'\)", request.text))):
-                    recordId.append(line.replace("('",''))
-                if len(recordId) == 0:
-                    logging.error('TXT record ' +  recordName + ' was not created')
-                    return None
-                logging.info('TXT record ' +  recordName + ' created (Id: ' + max(recordId) + ')')
-                return max(recordId)
-            logging.error('TXT record ' +  recordName + ' was not created')
-            return None
-        except:
-            logging.exception('An exception occured')
-            return None
-    
-    def delRecord(self, sessionId, zoneId, recordId):
-        try:
-            logging.info('Deleting TXT record id ' +  recordId + ' from zone id ' + zoneId)
-            data = { 'menu': 'edit_zone', 'hosted_dns_zoneid': zoneId, 'hosted_dns_recordid': recordId, 'hosted_dns_editzone': 1, 'hosted_dns_delrecord': 1, 'hosted_dns_delconfirm': 'delete' }
-            cookie = {'CGISESSID':sessionId}
-            request = requests.post('https://dns.he.net/', data=data, cookies=cookie)
-            if request:
-                for line in re.findall('<div id="dns_status" onClick="hideThis\(this\);">Successfully removed record.</div>', request.text):
-                    logging.info('TXT record ' +  recordId + ' of zone id ' + zoneId + ' deleted')
-                    return True
-            logging.error('TXT record ' +  recordId + ' of zone id ' + zoneId + ' not deleted')
-            return False
-        except:
-            logging.exception('An exception occured')
-            return False
-
     def __init__(self, config, domainName, domainValidation, domainAuthOutput):
         try:
-            recordName = '_acme-challenge.' + domainName.replace('*.','')
-            sessionId, zoneList = self.getSession(config['DEFAULT']['UserName'], config['DEFAULT']['Password'])
-            if sessionId:
-                zoneId = self.findZoneId(domainName, zoneList)
-                if zoneId:
-                    if domainAuthOutput == None:
-                        recordId = self.addRecordTxt(sessionId, zoneId, recordName, domainValidation)
-                        print(recordId)
-                    else:
-                        self.delRecord(sessionId, zoneId, domainAuthOutput)
+            domainName = domainName.replace('*.', '')
+            recordName = '_acme-challenge.' + domainName
+            domainValidation = urllib.parse.quote_plus(domainValidation)
+            if config.has_option(domainName, 'Key'):
+                domainKey = config[domainName]['Key']
+                if domainAuthOutput == None:
+                    logging.info('Updating txt record ' + recordName +
+                                 ' with validation token ' + domainValidation)
+                    reqResult = requests.post('https://dyn.dns.he.net/nic/update', data={
+                                              'hostname': recordName, 'password': domainKey, 'txt': domainValidation})
+                    logging.info(
+                        'Post Result : ' + str(reqResult.status_code) + ', ' + reqResult.text)
                 else:
-                    logging.error('Could not find zoneId for domain ' + domainName + '. Please check your configuration')
+                    logging.info('Cleaning up txt record ' + recordName)
+                    reqResult = requests.post('https://dyn.dns.he.net/nic/update', data={
+                                              'hostname': recordName, 'password': domainKey, 'txt': urllib.parse.quote_plus('Acme challenge key')})
+                    logging.info(
+                        'Post Result : ' + str(reqResult.status_code) + ', ' + reqResult.text)
             else:
-                logging.error('Could get a sessionID. Please check your username and password.')
+                logging.error(
+                    domainName + ' has no key, cannot update txt record')
         except:
             logging.exception('An exception occured')
+
 
 class certbot:
     def validateConfig(self, config):
@@ -133,20 +65,16 @@ class certbot:
                 logging.error(os.path.basename(__file__) + ' not found')
             else:
                 config['DEFAULT']['certbotHe'] = cb
-                logging.info(os.path.basename(__file__) + ' path: ' + config['DEFAULT']['certbotHe'])
+                logging.info(os.path.basename(__file__) +
+                             ' path: ' + config['DEFAULT']['certbotHe'])
                 if not config.has_option('DEFAULT', 'KeySize'):
-                    config['DEFAULT']['KeySize']=2048
+                    config['DEFAULT']['KeySize'] = 2048
                 logging.info('Using Key Size ' + config['DEFAULT']['KeySize'])
-                if config.has_option('DEFAULT', 'UserName'):
-                    if config.has_option('DEFAULT', 'Password'):
-                        if config.has_option('DEFAULT', 'Email'):
-                            return config
-                        else:
-                            logging.error('Please define \'Email\' with your email address in the \'DEFAULT\' section of the configuration file')
-                    else:
-                        logging.error('Please define \'Password\' with your dns.he.net password in the \'DEFAULT\' section of the configuration file')
+                if config.has_option('DEFAULT', 'Email'):
+                    return config
                 else:
-                    logging.error('Please define \'UserName\' with your dns.het.net username in the \'DEFAULT\' section of the configuration file')
+                    logging.error(
+                        'Please define \'Email\' with your email address in the \'DEFAULT\' section of the configuration file')
         return none
 
     def getDomainList(self, config):
@@ -155,14 +83,20 @@ class certbot:
             for item in config.items():
                 if item[0] != 'DEFAULT':
                     logging.info('Checking domain ' + item[0] + ' options')
-                    if config.has_option(item[0], 'Domain'):
-                        if str2bool(config[item[0]]['Domain']):
-                            logging.info('Adding domain ' + item[0] + ' to certificate request')
-                            domainList.append(item[0])
-                    if config.has_option(item[0], 'Wildcard'):
-                        if str2bool(config[item[0]]['Wildcard']):
-                            logging.info('Adding wildcard domain *.' + item[0] + ' to certificate request')
-                            domainList.append('*.' + item[0])
+                    if config.has_option(item[0], 'Key'):
+                        if config.has_option(item[0], 'Domain'):
+                            if str2bool(config[item[0]]['Domain']):
+                                logging.info('Adding domain ' +
+                                             item[0] + ' to certificate request')
+                                domainList.append(item[0])
+                        if config.has_option(item[0], 'Wildcard'):
+                            if str2bool(config[item[0]]['Wildcard']):
+                                logging.info(
+                                    'Adding wildcard domain *.' + item[0] + ' to certificate request')
+                                domainList.append('*.' + item[0])
+                        else:
+                            logging.error(
+                                'Domain ' + item[0] + ' has no key, skipping')
             return domainList
         except:
             return None
@@ -172,7 +106,8 @@ class certbot:
             cmd = [config['DEFAULT']['certbot']]
             if certMode == 1:
                 logging.info('command: certonly')
-                cmd += ['certonly', '--email', config['DEFAULT']['Email'], '--manual', '--manual-public-ip-logging-ok', '--domain', ','.join(domainList)]
+                cmd += ['certonly', '--email', config['DEFAULT']['Email'], '--manual',
+                        '--manual-public-ip-logging-ok', '--domain', ','.join(domainList)]
             elif certMode == 2:
                 logging.info('command: renew')
                 cmd += ['renew']
@@ -186,9 +121,10 @@ class certbot:
                 logging.info('with option: --agree-tos')
                 cmd += ['--agree-tos']
             if expandCert:
-                logging.info('with option: --agree-tos')
+                logging.info('with option: --expand')
                 cmd += ['--expand']
-            cmd += ['--preferred-challenges', 'dns', '--manual-auth-hook', config['DEFAULT']['certbotHe'], '--manual-cleanup-hook', config['DEFAULT']['certbotHe'], '--rsa-key-size', config['DEFAULT']['KeySize'], '-n']
+            cmd += ['--preferred-challenges', 'dns', '--manual-auth-hook', config['DEFAULT']['certbotHe'],
+                    '--manual-cleanup-hook', config['DEFAULT']['certbotHe'], '--rsa-key-size', config['DEFAULT']['KeySize'], '-n']
             if config['DEFAULT']['postHook']:
                 cmd += ['--post-hook', config['DEFAULT']['postHook']]
             return cmd
@@ -200,12 +136,14 @@ class certbot:
         if config:
             domainList = self.getDomainList(config)
             if domainList:
-                cmd = self.cmdCertbot(config, certMode, testCert, dryRun, agreeTos, expandCert, domainList)
+                cmd = self.cmdCertbot(
+                    config, certMode, testCert, dryRun, agreeTos, expandCert, domainList)
                 if cmd:
                     logging.info('Command: ' + ' '.join(cmd))
-                    logging.info('Result: ' + subprocess.run(cmd, stdout=subprocess.PIPE).stdout.decode('utf-8'))
+                    logging.info('Result: ' + subprocess.run(cmd,
+                                                             stdout=subprocess.PIPE).stdout.decode('utf-8'))
                 else:
-                    logging.error('Error while creating command line')    
+                    logging.error('Error while creating command line')
 
 
 def readEnviron(envVar):
@@ -214,18 +152,23 @@ def readEnviron(envVar):
     except:
         return None
 
+
 def str2bool(v):
     try:
         return v.lower() in ("yes", "ye", "y", "true", "tru", "tr", "t", "oui", "ou", "o", "1")
     except:
         return False
-  
+
+
 def usage(cfgFile):
     try:
-        print('Usage: ' + os.path.basename(__file__) + ' <COMMANDS> [OPTIONS]\n')
-        print(os.path.basename(__file__) + ' can obtain HTTPS/TLS/SSL certificates. It will use')
+        print('Usage: ' + os.path.basename(__file__) +
+              ' <COMMANDS> [OPTIONS]\n')
+        print(os.path.basename(__file__) +
+              ' can obtain HTTPS/TLS/SSL certificates. It will use')
         print('certbot-he-hook for obtaining certificate. COMMANDS and OPTIONS are:\n')
-        print('  certonly              Obtain or renew a certificate, but do not install it')
+        print(
+            '  certonly              Obtain or renew a certificate, but do not install it')
         print('  renew                 Renew all previously obtained certificates that are near expiry\n')
         print('  -t --test-cert        Obtain a test certificate from a staging server')
         print('  -d, --dry-run         Test "renew" or "certonly" without saving any certificates to disk')
@@ -238,21 +181,25 @@ def usage(cfgFile):
     except:
         logging.exception('An exception occured')
 
+
 def version():
     try:
-        print(os.path.basename(__file__) + ' version 0.20.0')
+        print(os.path.basename(__file__) + ' version ' + VERSION)
         print('Copyright (C) 2019 Eddy Beaupre.')
         print('License MIT: The MIT Licence <https://opensource.org/licenses/MIT>.')
         print('This is free software: you are free to change and redistribute it.')
         print('There is NO WARRANTY, to the extent permitted by law.')
     except:
         logging.exception('An exception occured')
- 
+
+
 def main(argv):
     try:
-        scriptName, scriptExtension = os.path.splitext(os.path.basename(__file__))
+        scriptName, scriptExtension = os.path.splitext(
+            os.path.basename(__file__))
         handler = logging.handlers.SysLogHandler('/dev/log')
-        formatter = logging.Formatter(scriptName + '['+ str(os.getpid()) + ']: %(message)s')
+        formatter = logging.Formatter(
+            scriptName + '[' + str(os.getpid()) + ']: %(message)s')
         handler.setFormatter(formatter)
         root = logging.getLogger()
         root.setLevel(os.environ.get("LOGLEVEL", "INFO"))
@@ -262,7 +209,8 @@ def main(argv):
         return os.EX_UNAVAILABLE
 
     try:
-        logging.info("initializing")
+        logging.info(os.path.basename(__file__) +
+                     ' version ' + VERSION + " initializing...")
         configFile = "/etc/" + scriptName + ".conf"
 
         if not os.path.isfile(configFile):
@@ -272,13 +220,14 @@ def main(argv):
             config = configparser.ConfigParser()
             config.sections()
             config.read(configFile)
-            
+
             domainName = readEnviron('CERTBOT_DOMAIN')
             domainValidation = readEnviron('CERTBOT_VALIDATION')
             domainAuthOutput = readEnviron('CERTBOT_AUTH_OUTPUT')
-            
+
             if domainName or domainValidation:
-                cbh = certbotHook(config, domainName, domainValidation, domainAuthOutput)
+                cbh = certbotHook(config, domainName,
+                                  domainValidation, domainAuthOutput)
             else:
                 certMode = 0
                 testCert = False
@@ -286,8 +235,9 @@ def main(argv):
                 agreeTos = False
                 expandCert = False
 
-                opts, args = getopt.gnu_getopt(argv, "htdaev", ['help', 'test-cert', 'dry-run', 'agree-tos', 'expand', 'version'])
-                    
+                opts, args = getopt.gnu_getopt(argv, "htdaev", [
+                                               'help', 'test-cert', 'dry-run', 'agree-tos', 'expand', 'version'])
+
                 for opt, arg in opts:
                     if opt in ('-h', '--help'):
                         usage(configFile)
@@ -314,7 +264,8 @@ def main(argv):
                             logging.info('Found command: certonly')
                             certMode = 1
                         else:
-                            logging.error('Commands certonly and renew are mutually exclusive')
+                            logging.error(
+                                'Commands certonly and renew are mutually exclusive')
                             usage(configFile)
                             return os.EX_USAGE
                     elif arg.startswith('r') and arg in ('renew'):
@@ -322,21 +273,22 @@ def main(argv):
                             logging.info('Found command: renew')
                             certMode = 2
                         else:
-                            logging.error('Commands renew and certonly are mutually exclusive')
+                            logging.error(
+                                'Commands renew and certonly are mutually exclusive')
                             usage(configFile)
                             return os.EX_USAGE
-                if certMode==0:
+                if certMode == 0:
                     logging.error('No command found')
                     usage(configFile)
                     return os.EX_USAGE
                 else:
-                    cb = certbot(config, certMode, testCert, dryRun, agreeTos, expandCert)
+                    cb = certbot(config, certMode, testCert,
+                                 dryRun, agreeTos, expandCert)
         return os.EX_OK
     except:
         logging.exception('An exception occured')
         return os.EX_SOFTWARE
-    
-    
+
 
 if __name__ == '__main__':
     exit(main(sys.argv[1:]))

@@ -1,7 +1,4 @@
 [DEFAULT]
-;username and password are needed to create and delete TXT records.
-UserName = <dns.he.net username>
-Password = <dns.he.net password>
 ; Email address is used by Let's Encrypt for important account notifications
 Email = <your email>
 ; RSA Key Size of the cerficate
@@ -16,6 +13,8 @@ KeySize = 4096
 ; You can have as many domain section as you want. The first domain will
 ; also be the certificate name.
 [domain.com]
+; Key for the DDNS enabled TXT record
+Key = DDNS_HE_TXT_KEY
 ; Request a certificate for this domain.
 Domain = True
 ; Request a wildcard certificate for this domain.
@@ -26,6 +25,8 @@ Wildcard = True
 ; is already covered by *.domain.com, but you still can a wildcard for
 ; *.subdomain.domain.com
 [subdomain.domain.com]
+; Key for the DDNS enabled TXT record
+Key = DDNS_HE_TXT_KEY
 ; Do not request a certificate for this subdomain
 Domain = False
 ; But request a wildcard certificate for it.
